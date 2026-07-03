@@ -53,8 +53,11 @@ router.post('/check-in', auth, [
       schoolSettings.geolocation.longitude
     );
 
-    // Cek apakah dalam radius
-    const isValid = distance <= schoolSettings.geoRadius;
+    // OPSI A: Cek apakah dalam radius
+    // ✅ HADIR (≤ 15m)
+    // ❌ LUAR_LOKASI (> 15m)
+    const isWithinRadius = distance <= schoolSettings.geoRadius;
+    const status = isWithinRadius ? 'hadir' : 'luar_lokasi';
 
     // Cek apakah sudah check-in hari ini
     const today = new Date();
@@ -76,9 +79,9 @@ router.post('/check-in', auth, [
           longitude,
           accuracy,
           distance: Math.round(distance),
-          isValid
+          isValid: isWithinRadius
         },
-        status: isValid ? 'hadir' : 'terlambat'
+        status: status
       });
     } else if (attendance.checkIn && attendance.checkIn.time) {
       // Sudah check-in
@@ -95,23 +98,27 @@ router.post('/check-in', auth, [
         longitude,
         accuracy,
         distance: Math.round(distance),
-        isValid
+        isValid: isWithinRadius
       };
-      attendance.status = isValid ? 'hadir' : 'terlambat';
+      attendance.status = status;
     }
 
     await attendance.save();
 
+    // Response berdasarkan status
+    const responseMessage = isWithinRadius 
+      ? '✅ Check-in berhasil! Status: HADIR'
+      : '❌ Check-in ditolak! Anda berada di luar lokasi sekolah';
+
     res.json({
-      success: true,
-      message: isValid ? '✅ Check-in berhasil! Anda hadir tepat waktu' : 
-                        '⚠️ Check-in berhasil! Namun Anda berada di luar radius sekolah',
+      success: isWithinRadius,
+      message: responseMessage,
       data: {
         status: attendance.status,
         checkInTime: attendance.checkIn.time,
         distance: Math.round(distance),
         allowedRadius: schoolSettings.geoRadius,
-        isValid
+        isWithinRadius
       }
     });
   } catch (error) {
@@ -153,7 +160,8 @@ router.post('/check-out', auth, [
       schoolSettings.geolocation.longitude
     );
 
-    const isValid = distance <= schoolSettings.geoRadius;
+    // OPSI A: Cek apakah dalam radius
+    const isWithinRadius = distance <= schoolSettings.geoRadius;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -175,13 +183,25 @@ router.post('/check-out', auth, [
       });
     }
 
+    // Jika check-out di luar lokasi
+    if (!isWithinRadius) {
+      return res.status(400).json({
+        success: false,
+        message: '❌ Check-out ditolak! Anda harus berada di lokasi sekolah untuk check-out',
+        data: {
+          distance: Math.round(distance),
+          allowedRadius: schoolSettings.geoRadius
+        }
+      });
+    }
+
     attendance.checkOut = {
       time: new Date(),
       latitude,
       longitude,
       accuracy,
       distance: Math.round(distance),
-      isValid
+      isValid: isWithinRadius
     };
 
     await attendance.save();
@@ -193,7 +213,7 @@ router.post('/check-out', auth, [
         checkOutTime: attendance.checkOut.time,
         distance: Math.round(distance),
         allowedRadius: schoolSettings.geoRadius,
-        isValid
+        isWithinRadius
       }
     });
   } catch (error) {
